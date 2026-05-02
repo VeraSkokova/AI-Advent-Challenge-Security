@@ -20,5 +20,5 @@ kotlin {
 }
 
 application {
-    mainClass.set("PromptInjectionTestKt")
+    mainClass.set("IndirectInjectionDemoKt")
 }
