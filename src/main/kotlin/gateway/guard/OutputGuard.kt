@@ -19,6 +19,24 @@ class OutputGuard {
         val regex: Regex,
     )
 
+    companion object {
+        /**
+         * Whitespace class that includes regular spaces, tabs, newlines,
+         * and Unicode non-breaking spaces (U+00A0) that LLMs often emit.
+         */
+        private const val WS = """[\s\u00A0]"""
+
+        /**
+         * Non-word boundary: matches start-of-string OR any character that is
+         * not alphanumeric/underscore. Replaces \b which fails when the
+         * preceding character is punctuation like ' or ".
+         */
+        private const val LB = """(?:^|[^\w])"""
+
+        /** Trailing boundary: end-of-string OR non-word character. */
+        private const val RB = """(?:[^\w]|$)"""
+    }
+
     private val dangerousPatterns = listOf(
         // Hallucinated secrets — model might generate fake but realistic-looking keys
         OutputPattern("API Key", Regex("""sk-[a-zA-Z0-9]{20,}""")),
@@ -31,18 +49,19 @@ class OutputGuard {
             Regex("""https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?(/\S*)?"""),
         ),
 
-        // Dangerous shell commands
-        OutputPattern("Shell: rm -rf", Regex("""rm\s+-rf\s+/""", RegexOption.IGNORE_CASE)),
-        OutputPattern("Shell: curl pipe", Regex("""curl\s+\S+\s*\|\s*(?:bash|sh|zsh)""", RegexOption.IGNORE_CASE)),
-        OutputPattern("Shell: wget execute", Regex("""wget\s+\S+.*&&\s*(?:chmod|bash|sh)""", RegexOption.IGNORE_CASE)),
-        OutputPattern("Shell: curl to file", Regex("""curl\s+-[oO]\s""", RegexOption.IGNORE_CASE)),
-        OutputPattern("Shell: wget", Regex("""\bwget\s+https?://\S+""", RegexOption.IGNORE_CASE)),
+        // Dangerous shell commands — boundaries handle surrounding punctuation/NBSP
+        OutputPattern("Shell: rm -rf", Regex("""${LB}rm${WS}+-rf${WS}+/""", RegexOption.IGNORE_CASE)),
+        OutputPattern("Shell: curl pipe", Regex("""${LB}curl${WS}+\S+${WS}*\|${WS}*(?:bash|sh|zsh)""", RegexOption.IGNORE_CASE)),
+        OutputPattern("Shell: wget execute", Regex("""${LB}wget${WS}+\S+.*&&${WS}*(?:chmod|bash|sh)""", RegexOption.IGNORE_CASE)),
+        OutputPattern("Shell: curl to file", Regex("""${LB}curl${WS}+-[oO]${WS}""", RegexOption.IGNORE_CASE)),
+        OutputPattern("Shell: curl command", Regex("""${LB}curl${WS}+\S""", RegexOption.IGNORE_CASE)),
+        OutputPattern("Shell: wget", Regex("""${LB}wget${WS}+https?://\S+""", RegexOption.IGNORE_CASE)),
 
         // System prompt leak indicators
         OutputPattern(
             "Prompt Leak",
             Regex(
-                """(?:system\s*prompt|you\s+are\s+a|your\s+instructions|<<SYS>>|<\|im_start\|>system)""",
+                """(?:system${WS}*prompt|you${WS}+are${WS}+a|your${WS}+instructions|<<SYS>>|<\|im_start\|>system)""",
                 RegexOption.IGNORE_CASE,
             ),
         ),
@@ -114,7 +133,15 @@ class OutputGuard {
                 buffer.delete(0, trimPoint)
             }
 
-            return scan(buffer.toString())
+            val bufferSnapshot = buffer.toString()
+            /*log.debug(
+                "OutputGuard buffer [len={}]: [{}]",
+                bufferSnapshot.length,
+                bufferSnapshot.replace("\n", "\\n").replace("\r", "\\r")
+                    .replace("\u00A0", "<NBSP>"),
+            )*/
+
+            return scan(bufferSnapshot)
         }
 
         /** Flush: final scan on any remaining buffer content. */
